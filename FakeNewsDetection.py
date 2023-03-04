@@ -19,17 +19,16 @@ warnings.filterwarnings(action = 'ignore')
 
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences 
-from tensorflow.keras.layers import *
+import tensorflow.keras.layers as tfkl
 from keras.models import Model
 from keras.utils import to_categorical
 from keras.callbacks import EarlyStopping
-import gensim
 from gensim.models import Word2Vec
 
 
 #%% import data
 dataset = load_dataset("liar")   
-
+    
 if True:
     train_label = np.array(dataset["train"]['label'])
     test_label = np.array(dataset["test"]['label'])
@@ -57,18 +56,19 @@ else:
     train_label = dataset["train"]['label']
     test_label = dataset["test"]['label']
     validation_label = dataset["validation"]['label']
-    
-print('Labels to be trained to: ',np.unique(train_label))
+        
+print('\nLabels to be trained to: ',np.unique(train_label),'\n')
 
 
 #%% Define the hyperparameters
 max_words = 100                 # max number of words in a statement
 embedding_dim = 50              # dimension of the word vector
 output_dim = tf.unique(train_label)[0].shape[0]  # number of output labels
-num_filters = 128            # number of convolutional filters
-kernel_size = 3              # size of convolutional kernel
+num_filters = 256            # number of convolutional filters
+kernel_size = 5              # size of convolutional kernel
 pool_size = 2                # size of pooling window
-hidden_dim = 50              # dimension of fully connected layers
+hidden_dim = 96              # dimension of fully connected layers
+lstm_units = 128             # LSTM recurrent units
 
 
 #%% create embedding
@@ -106,31 +106,52 @@ for word, i in tokenizer.word_index.items():
             pass
 
 # Create the embedding layer
-embedding_layer = Embedding(input_dim=max_words, output_dim=embedding_dim,
+embedding_layer = tfkl.Embedding(input_dim=max_words, output_dim=embedding_dim,
                             weights=[embedding_matrix], input_length=max_words)
 
 
 #%% Model Architecture
-# Define the two inputs
-input_subject = Input(shape=(max_words,), dtype='int32')
-input_statement = Input(shape=(max_words,), dtype='int32')
+# Input Layer: This layer takes in the sentence as input, where each word is represented as a vector.
+input_subject = tfkl.Input(shape=(max_words,), dtype='int32')
+input_statement = tfkl.Input(shape=(max_words,), dtype='int32')
 
-# Define the embedding layer
-#embedding_layer = Embedding(input_dim=max_words, output_dim=embedding_dim, input_length=max_words)
 
-# Apply the embedding layer to both inputs
+# Embedding Layer: This layer converts each word vector into a dense embedding vector,
+# which captures semantic meaning and context of each word.
 embedded_subject = embedding_layer(input_subject)
 embedded_statement = embedding_layer(input_statement)
 
-# Merge the two embedded inputs using the Concatenate layer
-merged = Concatenate(axis=-1)([embedded_subject, embedded_statement])
 
-# Define the model
-conv_layer = Conv1D(filters=num_filters, kernel_size=kernel_size, activation='softmax')(merged)
-pool_layer = MaxPooling1D(pool_size=pool_size)(conv_layer)
-flatten_layer = Flatten()(pool_layer)
-hidden_layer = Dense(hidden_dim, activation='relu')(flatten_layer)
-output = Dense(output_dim, activation='softmax')(hidden_layer)
+# Merge the two embedded inputs using the Concatenate layer
+merged = tfkl.Concatenate(axis=-1)([embedded_subject, embedded_statement])
+
+
+# Convolutional Layer: This layer applies convolution operation over the embedded word 
+# vectors to capture n-grams of words, where n can range from 1 to 5. This helps in 
+# identifying patterns in the sentence structure and the type of words used.
+conv_layer = tfkl.Conv1D(filters=num_filters, kernel_size=kernel_size, activation='softmax')(merged)
+
+
+# Max-Pooling Layer: This layer reduces the output of the convolutional layer by selecting the 
+# most significant features from each filter, which helps in preserving the most important patterns.
+pool_layer = tfkl.MaxPooling1D(pool_size=pool_size)(conv_layer)
+
+
+# The Flatten layer and the Dense layer are used to transform the input data from the previous 
+# layer to a format that can be used by the subsequent layers of the neural network. 
+# This can help to extract relevant features from the input data and make predictions or 
+# classifications based on those features.
+#flatten_layer = tfkl.Flatten()(pool_layer)
+#hidden_layer = tfkl.Dense(hidden_dim, activation='relu')(flatten_layer)
+
+
+# Recurrent Layer: This layer takes the output from the max-pooling layer and processes 
+# it through a recurrent neural network such as LSTM or GRU. This helps in capturing 
+# the temporal dependencies between words in a sentence and identifying the missing subject or object.
+lstm_layer = tfkl.LSTM(units=lstm_units)(pool_layer)
+
+# Output Layer: This layer produces the final prediction or classification of the input sentence.
+output = tfkl.Dense(output_dim, activation='softmax')(lstm_layer)
 
 model = Model(inputs=[input_subject, input_statement], outputs=output)
 model.summary()
